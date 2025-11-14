@@ -57,6 +57,9 @@ union C2S {
 	}c;
 }c2s;
 
+static float roll_hist[2]  = {0.0f, 0.0f};
+static float pitch_hist[2] = {0.0f, 0.0f};
+static float yaw_hist[2]   = {0.0f, 0.0f};
 
 #define SAMPLE_FREQ  100.0f   // Sample frequency in Hz (adjust to your actual rate)
 #define BETA         0.1f     // Filter gain (0.01 to 0.5, tune for your application)
@@ -381,6 +384,8 @@ int main()
     calibrate_magnetometer();
 
     Quaternion q = {1,0,0,0};
+
+    int count = 0;
     // --- Main read loop ---
     while (1) {
 
@@ -521,7 +526,7 @@ int main()
 //        print_float(gyro_y_dps); xil_printf(" ");
 //        print_float(gyro_z_dps); xil_printf("\n");
 
-        float beta = 0.23;
+        float beta = 1;
         float dt = dt_seconds ;
         Vector3 gyroV  = {gyro_x_dps, gyro_y_dps, gyro_z_dps};
         Vector3 accelV =  {accel_x_g , accel_y_g, accel_z_g};
@@ -549,14 +554,32 @@ int main()
 //                                xil_printf(" ");
 //                                print_float(q.z);
 //                                xil_printf("\n");
+        float roll_med  = median3(roll_deg,  roll_hist[0],  roll_hist[1]);
+        float pitch_med = median3(pitch_deg, pitch_hist[0], pitch_hist[1]);
+        float yaw_med   = median3(yaw_deg,   yaw_hist[0],   yaw_hist[1]);
+
+        roll_hist[1]  = roll_hist[0];
+        roll_hist[0]  = roll_deg;
+
+        pitch_hist[1] = pitch_hist[0];
+        pitch_hist[0] = pitch_deg;
+
+        yaw_hist[1]   = yaw_hist[0];
+        yaw_hist[0]   = yaw_deg;
+
+        // Use median values for printing / processing
+        roll_deg  = roll_med;
+        pitch_deg = pitch_med;
+        yaw_deg   = yaw_med;
 
                 xil_printf("ROLL=");
                 print_float(roll_deg);
                 xil_printf(" PITCH=");
-                print_float(-pitch_deg);
+                print_float(pitch_deg);
                 xil_printf(" YAW=");
                 print_float(yaw_deg);
                 xil_printf("\n");
+
 
 //                xil_printf(" ");
 //                print_float(pitch_deg);
