@@ -39,6 +39,9 @@ const float MAG_RES_GAUSS = 0.000146f;
 #define STATUS_REG        0x17
 #define OUT_X_XL      0x28
 
+#define MEDIAN_SIZE 10
+
+
 // --- Hard-iron calibration storage ---
 #define CALIBRATION_SAMPLES 200
 static int16_t mag_x_min = 32767, mag_x_max = -32768;
@@ -57,9 +60,13 @@ union C2S {
 	}c;
 }c2s;
 
-static float roll_hist[2]  = {0.0f, 0.0f};
-static float pitch_hist[2] = {0.0f, 0.0f};
-static float yaw_hist[2]   = {0.0f, 0.0f};
+// buffers for roll, pitch, yaw
+static float roll_hist[MEDIAN_SIZE]  = {0};
+static float pitch_hist[MEDIAN_SIZE] = {0};
+static float yaw_hist[MEDIAN_SIZE]   = {0};
+
+static int hist_index = 0;
+
 
 #define SAMPLE_FREQ  100.0f   // Sample frequency in Hz (adjust to your actual rate)
 #define BETA         0.1f     // Filter gain (0.01 to 0.5, tune for your application)
@@ -181,11 +188,21 @@ void calibrate_magnetometer() {
 }
 
 
-float median3(float a, float b, float c) {
-    if (a > b) { float t = a; a = b; b = t; }
-    if (b > c) { float t = b; b = c; c = t; }
-    if (a > b) { float t = a; a = b; b = t; }
-    return b;   // the median
+float median10(float *arr) {
+    float temp[MEDIAN_SIZE];
+    for (int i = 0; i < MEDIAN_SIZE; i++) temp[i] = arr[i];
+
+    // simple bubble sort for small array
+    for (int i = 0; i < MEDIAN_SIZE-1; i++) {
+        for (int j = i+1; j < MEDIAN_SIZE; j++) {
+            if (temp[i] > temp[j]) {
+                float t = temp[i];
+                temp[i] = temp[j];
+                temp[j] = t;
+            }
+        }
+    }
+    return temp[MEDIAN_SIZE/2]; // median
 }
 
 
@@ -196,15 +213,7 @@ int main()
 
     XTime t_prev, t_now;
     XTime_GetTime(&t_prev);
-//    Status = XGpio_Initialize(&Gpio, GPIO_DEVICE_ID);
-//    if (Status != XST_SUCCESS) {
-//        xil_printf("GPIO Initialization Failed\r\n");
-//        return XST_FAILURE;
-//    }
 
-//    XGpio_SetDataDirection(&Gpio, CHANNEL, 0x0); // all bits outputs
-    // Gpio for chip select of magnetometer
-//    XGpio_DiscreteWrite(&Gpio, CHANNEL, 0x1);
 
     // Initialize SPI
     ConfigPtr = XSpi_LookupConfig(XPAR_SPI_0_DEVICE_ID);
@@ -319,12 +328,7 @@ int main()
             xil_printf("WHO_AM_I_M: 0x%02X (Expected: 0x68)\r\n", ReceiveBuffer[1]);
 
 
-//            SendBuffer[0] = CTRL_REG1_M;
-//                       SendBuffer[1] = 0x58;
-//
-//                       XSpi_SetSlaveSelect(&SpiInstance, 0x02);
-//                       Status = XSpi_Transfer(&SpiInstance, SendBuffer, NULL, 2);
-//                       XSpi_SetSlaveSelect(&SpiInstance, 0x02);
+
             // CTRL_REG1_M (0x20) – Ultra-high performance, 80Hz, Temp compensation
             SendBuffer[0] = 0x20;
             SendBuffer[1] = 0xD4;   // 0b01110000
@@ -372,6 +376,7 @@ int main()
         sumX += (int32_t)gyroX[i];
         sumY += (int32_t)gyroY[i];
         sumZ += (int32_t)gyroZ[i];
+        usleep(50000);
     }
     int32_t biasX = sumX / 50;
     int32_t biasY = sumY / 50;
@@ -381,11 +386,11 @@ int main()
     float pitch_deg, roll_deg, yaw_deg;
 
     // --- HARD IRON CALIBRATION ---
-    calibrate_magnetometer();
+//    calibrate_magnetometer();
 
     Quaternion q = {1,0,0,0};
 
-    int count = 0;
+    int gate = 0;
     // --- Main read loop ---
     while (1) {
 
@@ -480,6 +485,10 @@ int main()
         int16_t mag_y_cal = mag_y - 2993.00;
         int16_t mag_z_cal = mag_z +3728.00;
 
+//        int16_t mag_x_cal = mag_x;
+//        int16_t mag_y_cal = mag_y;
+//        int16_t mag_z_cal = mag_z;
+
         // Convert calibrated values to µT
         float mag_x_T = (float)mag_x_cal * MAG_RES_GAUSS * 100.0f;
         float mag_y_T = (float)mag_y_cal * MAG_RES_GAUSS * 100.0f;
@@ -526,8 +535,8 @@ int main()
 //        print_float(gyro_y_dps); xil_printf(" ");
 //        print_float(gyro_z_dps); xil_printf("\n");
 
-        float beta = 1;
-        float dt = dt_seconds ;
+        float beta = 0.7;
+        float dt = dt_seconds  ;
         Vector3 gyroV  = {gyro_x_dps, gyro_y_dps, gyro_z_dps};
         Vector3 accelV =  {accel_x_g , accel_y_g, accel_z_g};
 
@@ -554,31 +563,32 @@ int main()
 //                                xil_printf(" ");
 //                                print_float(q.z);
 //                                xil_printf("\n");
-        float roll_med  = median3(roll_deg,  roll_hist[0],  roll_hist[1]);
-        float pitch_med = median3(pitch_deg, pitch_hist[0], pitch_hist[1]);
-        float yaw_med   = median3(yaw_deg,   yaw_hist[0],   yaw_hist[1]);
+        // store latest value in circular buffer
+//        roll_hist[hist_index]  = roll_deg;
+//        pitch_hist[hist_index] = pitch_deg;
+//        yaw_hist[hist_index]   = yaw_deg;
+//
+//        // compute median
+//        roll_deg  = median10(roll_hist);
+//        pitch_deg = median10(pitch_hist);
+//        yaw_deg   = median10(yaw_hist);
+//
+//        // advance index
+//        hist_index = (hist_index + 1) % MEDIAN_SIZE;
 
-        roll_hist[1]  = roll_hist[0];
-        roll_hist[0]  = roll_deg;
-
-        pitch_hist[1] = pitch_hist[0];
-        pitch_hist[0] = pitch_deg;
-
-        yaw_hist[1]   = yaw_hist[0];
-        yaw_hist[0]   = yaw_deg;
-
-        // Use median values for printing / processing
-        roll_deg  = roll_med;
-        pitch_deg = pitch_med;
-        yaw_deg   = yaw_med;
-
+        if(gate == 1){
                 xil_printf("ROLL=");
                 print_float(roll_deg);
                 xil_printf(" PITCH=");
-                print_float(pitch_deg);
+                print_float(-pitch_deg);
                 xil_printf(" YAW=");
                 print_float(yaw_deg);
                 xil_printf("\n");
+                gate = 0;
+        }
+        else{
+        	gate++;
+        }
 
 
 //                xil_printf(" ");
@@ -598,7 +608,7 @@ int main()
 
 
 
-        usleep(100000);
+        usleep(50000);
     }
 
     cleanup_platform();
